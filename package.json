@@ -1,0 +1,14 @@
+{
+  "name": "garden-city-lineup",
+  "private": true,
+  "description": "Garden City Tattoo — mobile lineup landing page",
+  "scripts": {
+    "start": "serve . -l tcp://0.0.0.0:${PORT:-3000}"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "serve": "^14.2.4"
+  }
+}

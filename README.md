@@ -2,7 +2,16 @@
 
 Mobile-first landing page: an endlessly swipeable band photo with one stop per artist. The centred artist is in colour; everyone else is black-and-white and blurred. The artist's name repeats in the background, and the logo and contact speed dial take that artist's neon colour.
 
-Single self-contained file: `index.html` (images are embedded). Works on GitHub Pages as-is.
+Single self-contained file: `index.html` (images are embedded). Works on GitHub Pages as-is, or deploy on [Railway](https://railway.com) with the included `package.json` static server.
+
+## Deploy on Railway
+
+1. Push this repo to GitHub (see below).
+2. In [Railway](https://railway.com/new): **New Project** → **Deploy from GitHub repo** → select `garden-city-lineup`.
+3. Railway detects Node via `package.json` and runs `npm start`, which serves the site on `$PORT`.
+4. Open **Settings → Networking → Generate Domain** for a public URL.
+
+No build step or environment variables required.
 
 ## Editing
 All settings live at the top of the `<script>` in `index.html`:
