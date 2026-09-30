@@ -284,6 +284,7 @@ for (let t = 0; t < TILES; t++) {
   });
   track.appendChild(tile);
 }
+const hlUses = track.querySelectorAll(".hl");
 
 // World coordinates: an endless row of images, each IMG_W wide. x = world x at screen centre.
 // Global step n -> world position floor(n/N)*IMG_W + STEPS[n mod N].x
@@ -299,8 +300,9 @@ function nearestStep(x) {
   return best;
 }
 
-let lit = -1, litStep = 0;
-let x = STEPS[0].x, v = 0, target = x, scale = 1, animating = false;
+let lit = -1, litStep = 0, nameLit = -1;
+let x = STEPS[0].x, v = 0, target = x, scale = 1, animating = false, springRaf = 0;
+let renderRaf = 0;
 
 function measure() {
   const vw = innerWidth, vh = innerHeight;
@@ -311,8 +313,20 @@ function measure() {
   track.style.setProperty("--tw", IMG_W * scale + "px");
   render();
 }
+function nameDirTo(to, from) {
+  if (from < 0) return 1;
+  let d = to - from;
+  if (d > N / 2) d -= N;
+  if (d < -N / 2) d += N;
+  return Math.sign(d) || 1;
+}
+function syncNamePattern(i, dir) {
+  if (i === nameLit) return;
+  if (nameLit === -1) fillNames(i);
+  else swapNames(i, dir ?? nameDirTo(i, nameLit));
+  nameLit = i;
+}
 function render() {
-  const tileW = IMG_W * scale;
   const k = Math.floor(x / IMG_W);
   const within = x - k * IMG_W;           // 0..IMG_W inside tile k
   const tx = innerWidth / 2 - (MID * IMG_W + within) * scale;
@@ -321,27 +335,51 @@ function render() {
   if (a !== lit) {
     const g = nearestStep(x), dir = Math.sign(g - litStep) || 1;
     litStep = g;
-    if (lit !== -1) swapNames(a, dir); else fillNames(a);
     lit = a;
-    track.querySelectorAll(".hl").forEach((u) => u.classList.toggle("on", +u.dataset.i === a));
+    hlUses.forEach((u) => u.classList.toggle("on", +u.dataset.i === a));
+    if (!drag && !animating) syncNamePattern(a, dir);
   }
+}
+function scheduleRender() {
+  if (renderRaf) return;
+  renderRaf = requestAnimationFrame(() => { renderRaf = 0; render(); });
 }
 
 // Critically damped spring toward target
 let last = 0;
+function stopSpring() {
+  animating = false;
+  cancelAnimationFrame(springRaf);
+  springRaf = 0;
+}
 function tick(t) {
+  if (!animating) return;
   const dt = Math.min(0.032, (t - last) / 1000 || 0.016); last = t;
   const w = 16, k = w * w, c = 2 * w;
   v += (-k * (x - target) - c * v) * dt;
   x += v * dt;
-  if (Math.abs(x - target) < 0.05 && Math.abs(v) < 1) { x = target; v = 0; animating = false; render(); dialBack(); return; }
+  if (Math.abs(x - target) < 0.05 && Math.abs(v) < 1) {
+    x = target; v = 0; stopSpring();
+    render();
+    const settled = mod(nearestStep(x), N);
+    syncNamePattern(settled, nameDirTo(settled, nameLit));
+    dialBack();
+    return;
+  }
   render();
-  requestAnimationFrame(tick);
+  springRaf = requestAnimationFrame(tick);
 }
 function animateTo(tx) {
   target = tx;
-  if (reduceMotion) { x = tx; v = 0; render(); dialBack(); return; }
-  if (!animating) { animating = true; last = performance.now(); requestAnimationFrame(tick); }
+  if (reduceMotion) {
+    x = tx; v = 0; stopSpring();
+    render();
+    const settled = mod(nearestStep(x), N);
+    syncNamePattern(settled, nameDirTo(settled, nameLit));
+    dialBack();
+    return;
+  }
+  if (!animating) { animating = true; last = performance.now(); springRaf = requestAnimationFrame(tick); }
 }
 function goToStep(n) { if (mod(n, N) !== dialIdx) dialAway(); animateTo(stepPos(n)); }
 function goToIndex(i) {
@@ -356,7 +394,9 @@ let drag = null;
 stage.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
   stage.setPointerCapture(e.pointerId);
-  animating = false; v = 0;
+  stopSpring();
+  target = x;
+  v = 0;
   drag = { id: e.pointerId, sx: e.clientX, x0: x, startStep: nearestStep(x), samples: [[e.timeStamp, e.clientX]] };
   stage.classList.add("dragging");
   setOpen(false);
@@ -367,7 +407,7 @@ stage.addEventListener("pointermove", (e) => {
   if (Math.abs(e.clientX - drag.sx) > 8) dialAway();
   drag.samples.push([e.timeStamp, e.clientX]);
   if (drag.samples.length > 6) drag.samples.shift();
-  render();
+  scheduleRender();
 });
 function endDrag(e) {
   if (!drag || e.pointerId !== drag.id) return;
@@ -386,7 +426,9 @@ function endDrag(e) {
     n += moved < 0 ? 1 : -1;
   }
   v = worldV * 0.5;   // carry some flick momentum into the snap
-  drag = null; stage.classList.remove("dragging");
+  drag = null;
+  stage.classList.remove("dragging");
+  if (renderRaf) { cancelAnimationFrame(renderRaf); renderRaf = 0; }
   goToStep(n);
 }
 stage.addEventListener("pointerup", endDrag);
@@ -467,35 +509,71 @@ function buildRows() {
     namesEl.appendChild(r); return r;
   });
 }
+function resetNameRowStyles() {
+  nameRows.forEach((r) => { r.style.transform = ""; r.style.opacity = ""; });
+}
+function cancelNameAnims() {
+  nameAnims.forEach((a) => { try { a.cancel(); } catch (_) {} });
+  nameAnims = [];
+  resetNameRowStyles();
+}
+function whenAnimsDone(anims, timeoutMs, cb) {
+  if (!anims.length) { cb(); return; }
+  let left = anims.length, settled = false;
+  const done = () => {
+    if (settled) return;
+    if (--left > 0) return;
+    settled = true;
+    clearTimeout(tid);
+    cb();
+  };
+  const tid = setTimeout(done, timeoutMs);
+  anims.forEach((a) => { a.onfinish = done; });
+}
 function fillNames(i) {
+  cancelNameAnims();
   const txt = (STEPS[i].name + " \u00b7 ").repeat(8);
   nameRows.forEach((r) => (r.textContent = txt));
 }
 // Quick out (in swipe direction), swap, quick in. Odd rows travel the other way for texture.
 function swapNames(i, dir) {
   const token = ++nameToken;
-  nameAnims.forEach((a) => a.cancel()); nameAnims = [];
+  cancelNameAnims();
   if (reduceMotion) { fillNames(i); return; }
   const D = 70;
+  const rowCount = nameRows.length;
+  const outMs = 150 + Math.max(0, rowCount - 1) * 14 + 40;
   const out = nameRows.map((r, k) => {
     const s = (k % 2 ? 1 : -1) * dir;
     return r.animate([{ transform: "none", opacity: 1 }, { transform: `translateX(${s * D}px)`, opacity: 0 }],
       { duration: 150, delay: k * 14, easing: "cubic-bezier(.4,0,1,1)", fill: "forwards" });
   });
   nameAnims = out;
-  Promise.all(out.map((a) => a.finished)).then(() => {
+  whenAnimsDone(out, outMs, () => {
     if (token !== nameToken) return;
     fillNames(i);
+    const inMs = 260 + Math.max(0, rowCount - 1) * 18 + 40;
     nameAnims = nameRows.map((r, k) => {
       const s = (k % 2 ? 1 : -1) * dir;
       return r.animate([{ transform: `translateX(${-s * D}px)`, opacity: 0 }, { transform: "none", opacity: 1 }],
         { duration: 260, delay: k * 18, easing: "cubic-bezier(.2,.8,.2,1)", fill: "backwards" });
     });
-    out.forEach((a) => a.cancel());
-  }).catch(() => {});
+    whenAnimsDone(nameAnims, inMs, () => {
+      if (token !== nameToken) return;
+      resetNameRowStyles();
+    });
+  });
 }
 buildRows();
-addEventListener("resize", () => { buildRows(); fillNames(Math.max(lit, 0)); });
+fillNames(0);
+nameLit = 0;
+addEventListener("resize", () => {
+  buildRows();
+  const i = Math.max(nameLit, 0);
+  nameLit = -1;
+  fillNames(i);
+  nameLit = i;
+});
 
 addEventListener("resize", measure);
 
