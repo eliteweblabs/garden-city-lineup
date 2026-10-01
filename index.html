@@ -38,11 +38,17 @@
 }
 html, body { height: 100%; margin: 0; }
 body { font: 14px/1.4 system-ui, sans-serif; }
+html { background: #000; }
 body {
   background: var(--bg); color: var(--ink);
   overflow: hidden; overscroll-behavior: none;
   -webkit-user-select: none; user-select: none;
   -webkit-tap-highlight-color: transparent;
+}
+.safe-bottom {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 4;
+  height: env(safe-area-inset-bottom, 0px);
+  background: #000; pointer-events: none;
 }
 .stage { position: fixed; inset: 0; overflow: hidden; touch-action: none; cursor: grab; }
 .stage.dragging { cursor: grabbing; }
@@ -129,8 +135,8 @@ body {
 }
 .track { position: absolute; top: 0; left: 0; height: 100%; display: flex; will-change: transform; }
 /* Black-and-white base: one repeating background = no hairline seams between copies */
-/* Perf test: grayscale/blur off — re-enable filter on .gray if swipe feels OK without it */
-.gray { position: absolute; inset: 0; background: var(--img) 0 0 / var(--tw) 100% repeat-x; }
+.gray { position: absolute; inset: 0; background: var(--img) 0 0 / var(--tw) 100% repeat-x; filter: grayscale(1) contrast(1.05) blur(var(--bg-blur)); }
+:root { --bg-blur: 2.5px; }
 /* Colour copy per tile, masked to the centred person's traced shape */
 .tile { position: relative; }
 .tile svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
@@ -259,7 +265,7 @@ layers.forEach((el, depth) => {
   m.setAttribute("maskUnits", "userSpaceOnUse");
   m.setAttribute("x", 0); m.setAttribute("y", 0); m.setAttribute("width", IMG_W); m.setAttribute("height", IMG_H);
   const g = document.createElementNS(SVGNS, "g");
-  /* feather blur disabled for swipe perf test */
+  g.setAttribute("filter", "url(#feather)");
   g.appendChild(painted(el, "#fff"));
   layers.slice(depth + 1).forEach((front) => g.appendChild(painted(front, "#000")));  // cut out people in front
   m.appendChild(g); defs.appendChild(m);
@@ -346,6 +352,7 @@ function render() {
     litStep = g;
     lit = a;
     hlUses.forEach((u) => u.classList.toggle("on", +u.dataset.i === a));
+    tintLogo(STEPS[a].neon);
     if (!drag && !animating) syncNamePattern(a, dir);
   }
 }
@@ -482,6 +489,7 @@ function fillDial(i) {
     `<li style="--i:${3 - j}"><a class="act" href="${esc(href)}"${k === "ig" ? ' target="_blank" rel="noopener"' : ""} aria-label="${label} ${esc(p.name)}: ${esc(val)}">` +
     `<span class="chip"><b>${label}</b>${esc(val)}</span><span class="ico">${svg(ICONS[k])}</span></a></li>`).join("");
   fab.setAttribute("aria-label", `Contact ${p.name}`);
+  dial.style.setProperty("--neon", p.neon);
 }
 function setOpen(open) { dial.classList.toggle("open", open); fab.setAttribute("aria-expanded", open); }
 fab.addEventListener("click", () => setOpen(!dial.classList.contains("open")));
@@ -503,6 +511,24 @@ function dialBack() {
   }, wait);
 }
 fillDial(0);
+
+// ---- Logo tint tween ------------------------------------------------------
+const tint = ["R", "G", "B"].map((c) => document.getElementById("tint" + c));
+const hexRGB = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+let tintNow = hexRGB(STEPS[0].neon), tintRaf = 0;
+const INK = [0.086, 0.094, 0.11];
+function applyTint(c) { tint.forEach((f, k) => f.setAttribute("tableValues", `${INK[k]} ${c[k].toFixed(3)} 1`)); }
+function tintLogo(hex) {
+  const from = tintNow.slice(), to = hexRGB(hex), t0 = performance.now(), dur = reduceMotion ? 0 : 280;
+  cancelAnimationFrame(tintRaf);
+  const step = (t) => {
+    const p = dur ? Math.min(1, (t - t0) / dur) : 1, e = 1 - Math.pow(1 - p, 3);
+    tintNow = from.map((v, k) => v + (to[k] - v) * e); applyTint(tintNow);
+    if (p < 1) tintRaf = requestAnimationFrame(step);
+  };
+  tintRaf = requestAnimationFrame(step);
+}
+applyTint(tintNow);
 
 // ---- Name pattern ----------------------------------------------------------
 const namesEl = document.getElementById("names");
