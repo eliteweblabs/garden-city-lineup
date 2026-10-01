@@ -4,6 +4,8 @@ Mobile-first landing page: an endlessly swipeable band photo with one stop per a
 
 Single self-contained file: `index.html` (images are embedded). Works on GitHub Pages as-is, or deploy on [Railway](https://railway.com) with the included `package.json` static server.
 
+**Demo:** [demo.gif](./demo.gif) — 9:16 letterboxed so the full page (including the bottom) shows when opened directly.
+
 ## Deploy on Railway
 
 1. Push this repo to GitHub (see below).
