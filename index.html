@@ -55,9 +55,18 @@ body {
 .names div {
   font-family: var(--display); font-weight: 800; text-transform: uppercase;
   font-size: clamp(56px, 17vw, 120px); line-height: .9; letter-spacing: .005em;
-  white-space: nowrap; color: var(--pattern-fill); will-change: transform, opacity;
+  white-space: nowrap; color: var(--pattern-fill);
+  transform: translate3d(0, 0, 0); opacity: 1;
+  -webkit-backface-visibility: hidden; backface-visibility: hidden;
+  /* CSS transitions — Web Animations on text rows is flaky on iOS Safari */
+  transition:
+    transform 0.24s cubic-bezier(.2, .8, .2, 1),
+    opacity 0.2s cubic-bezier(.4, 0, 1, 1);
+  transition-delay: calc(var(--row-i, 0) * 16ms);
 }
 .names div:nth-child(even) { color: transparent; -webkit-text-stroke: 1.5px var(--pattern-line); }
+.names div.name-off-left { transform: translate3d(-72px, 0, 0); opacity: 0; }
+.names div.name-off-right { transform: translate3d(72px, 0, 0); opacity: 0; }
 
 .logo {
   position: absolute; left: 50%; z-index: 0;   /* sits behind the photo */
@@ -497,7 +506,9 @@ fillDial(0);
 
 // ---- Name pattern ----------------------------------------------------------
 const namesEl = document.getElementById("names");
-let nameRows = [], nameAnims = [], nameToken = 0;
+let nameRows = [], nameToken = 0, nameSwapTimer = 0;
+const NAME_OUT_MS = 280;
+const NAME_IN_MS = 320;
 function buildRows() {
   const probe = document.createElement("div"); probe.textContent = "X"; namesEl.appendChild(probe);
   const rowH = probe.getBoundingClientRect().height || 80; probe.remove();
@@ -509,60 +520,57 @@ function buildRows() {
     namesEl.appendChild(r); return r;
   });
 }
-function resetNameRowStyles() {
-  nameRows.forEach((r) => { r.style.transform = ""; r.style.opacity = ""; });
+function clearNameSwap() {
+  clearTimeout(nameSwapTimer);
+  nameSwapTimer = 0;
+  nameRows.forEach((r) => {
+    r.classList.remove("name-off-left", "name-off-right");
+    r.style.transition = "";
+  });
 }
-function cancelNameAnims() {
-  nameAnims.forEach((a) => { try { a.cancel(); } catch (_) {} });
-  nameAnims = [];
-  resetNameRowStyles();
-}
-function whenAnimsDone(anims, timeoutMs, cb) {
-  if (!anims.length) { cb(); return; }
-  let left = anims.length, settled = false;
-  const done = () => {
-    if (settled) return;
-    if (--left > 0) return;
-    settled = true;
-    clearTimeout(tid);
-    cb();
-  };
-  const tid = setTimeout(done, timeoutMs);
-  anims.forEach((a) => { a.onfinish = done; });
+function rowSlideClass(k, dir) {
+  const s = (k % 2 ? 1 : -1) * dir;
+  return s > 0 ? "name-off-right" : "name-off-left";
 }
 function fillNames(i) {
-  cancelNameAnims();
+  clearNameSwap();
   const txt = (STEPS[i].name + " \u00b7 ").repeat(8);
   nameRows.forEach((r) => (r.textContent = txt));
 }
-// Quick out (in swipe direction), swap, quick in. Odd rows travel the other way for texture.
+// Out via CSS transition, swap text, in from opposite side (double rAF so iOS applies the transition).
 function swapNames(i, dir) {
   const token = ++nameToken;
-  cancelNameAnims();
+  clearNameSwap();
   if (reduceMotion) { fillNames(i); return; }
-  const D = 70;
   const rowCount = nameRows.length;
-  const outMs = 150 + Math.max(0, rowCount - 1) * 14 + 40;
-  const out = nameRows.map((r, k) => {
-    const s = (k % 2 ? 1 : -1) * dir;
-    return r.animate([{ transform: "none", opacity: 1 }, { transform: `translateX(${s * D}px)`, opacity: 0 }],
-      { duration: 150, delay: k * 14, easing: "cubic-bezier(.4,0,1,1)", fill: "forwards" });
+  const outWait = NAME_OUT_MS + Math.max(0, rowCount - 1) * 16;
+  nameRows.forEach((r, k) => {
+    r.style.transition = "";
+    r.style.setProperty("--row-i", k);
+    r.classList.remove("name-off-left", "name-off-right");
+    r.classList.add(rowSlideClass(k, dir));
   });
-  nameAnims = out;
-  whenAnimsDone(out, outMs, () => {
+  nameSwapTimer = setTimeout(() => {
     if (token !== nameToken) return;
-    fillNames(i);
-    const inMs = 260 + Math.max(0, rowCount - 1) * 18 + 40;
-    nameAnims = nameRows.map((r, k) => {
-      const s = (k % 2 ? 1 : -1) * dir;
-      return r.animate([{ transform: `translateX(${-s * D}px)`, opacity: 0 }, { transform: "none", opacity: 1 }],
-        { duration: 260, delay: k * 18, easing: "cubic-bezier(.2,.8,.2,1)", fill: "backwards" });
+    const txt = (STEPS[i].name + " \u00b7 ").repeat(8);
+    nameRows.forEach((r, k) => {
+      r.textContent = txt;
+      r.style.transition = "none";
+      r.classList.remove("name-off-left", "name-off-right");
+      r.classList.add(rowSlideClass(k, -dir));
     });
-    whenAnimsDone(nameAnims, inMs, () => {
-      if (token !== nameToken) return;
-      resetNameRowStyles();
+    void namesEl.offsetHeight;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (token !== nameToken) return;
+        nameRows.forEach((r, k) => {
+          r.style.transition = "";
+          r.style.setProperty("--row-i", k);
+          r.classList.remove("name-off-left", "name-off-right");
+        });
+      });
     });
-  });
+  }, outWait);
 }
 buildRows();
 fillNames(0);
